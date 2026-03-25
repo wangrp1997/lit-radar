@@ -1,0 +1,12 @@
+{
+  "window_hours": 72,
+  "sources": "arxiv,hf",
+  "query": "cat:cs.RO AND (dexterous OR \"in-hand\" OR \"robotic hand\" OR multifinger OR tactile OR grasp OR manipulation)",
+  "keywords": "",
+  "max_results": 80,
+  "profile": "dexterous_hand",
+  "min_score": 5,
+  "out": "out",
+  "db": ""
+}
+

@@ -1,0 +1,35 @@
+{
+  "window_hours": 680,
+  "sources": "arxiv,hf",
+  "max_results": 120,
+  "out": "out",
+  "db": "",
+
+  "query": "cat:cs.RO AND (dexterous OR \"in-hand\" OR \"robotic hand\" OR multifinger OR tactile OR grasp OR manipulation)",
+  "keywords": "in-hand, dexterous, robotic hand, multifinger, tactile, fingertip, regrasp, retargeting, teleoperation",
+
+  "profile": "dexterous_hand",
+  "min_score": 6,
+  "include_seen": true,
+  "timeout_seconds": 90,
+  "retries": 4,
+
+  "profiles": {
+    "dexterous_hand": [
+      { "term": "dexterous hand", "weight": 7.0 },
+      { "term": "in-hand", "weight": 2.0 },
+      { "term": "in hand", "weight": 2.0 },
+      { "term": "multifinger", "weight": 5.0 },
+      { "term": "multi-finger", "weight": 5.0 },
+      { "term": "tactile", "weight": 4.0 },
+      { "term": "retargeting", "weight": 4.0 },
+      { "term": "teleoperation", "weight": 3.0 },
+      { "term": "regrasp", "weight": 4.0 },
+      { "term": "fingertip", "weight": 3.0 },
+      { "term": "hand-object", "weight": 3.0 },
+      { "term": "grasping", "weight": 2.0 },
+      { "term": "manipulation", "weight": 2.0 }
+    ]
+  }
+}
+

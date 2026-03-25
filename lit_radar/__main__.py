@@ -13,6 +13,10 @@ from typing import Iterable, Literal
 
 import feedparser
 import requests
+from requests.exceptions import RequestException
+
+from .config import Settings, load_config, resolve_settings
+from .profiles import DEFAULT_PROFILES, merge_profiles, parse_profiles_from_config, score_text
 
 
 Source = Literal["arxiv", "hf"]
@@ -29,6 +33,19 @@ class Paper:
     summary: str | None
     tags: list[str]
 
+
+@dataclass(frozen=True)
+class ScoredPaper:
+    source: str
+    id: str
+    title: str
+    url: str
+    published_at: str | None
+    authors: list[str]
+    summary: str | None
+    tags: list[str]
+    score: float
+    matched_terms: list[str]
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -49,6 +66,22 @@ def _keyword_match(title: str, summary: str | None, keywords: list[str]) -> bool
         return True
     hay = (title + "\n" + (summary or "")).lower()
     return any(k in hay for k in keywords)
+
+
+def _to_scored(p: Paper, profile_terms) -> ScoredPaper:
+    score, matched_terms = score_text(p.title + "\n" + (p.summary or ""), profile_terms)
+    return ScoredPaper(
+        source=p.source,
+        id=p.id,
+        title=p.title,
+        url=p.url,
+        published_at=p.published_at,
+        authors=p.authors,
+        summary=p.summary,
+        tags=p.tags,
+        score=score,
+        matched_terms=matched_terms,
+    )
 
 
 def _ensure_out_dir(path: str) -> None:
@@ -105,7 +138,23 @@ def _db_insert(conn: sqlite3.Connection, p: Paper) -> None:
     )
 
 
-def fetch_arxiv(window_hours: int, query: str, max_results: int = 50) -> list[Paper]:
+def _get_with_retry(url: str, *, params: dict | None, timeout_seconds: float, retries: int) -> requests.Response:
+    last_err: Exception | None = None
+    for attempt in range(max(1, retries)):
+        try:
+            r = requests.get(url, params=params, timeout=timeout_seconds)
+            r.raise_for_status()
+            return r
+        except RequestException as e:
+            last_err = e
+            if attempt < max(1, retries) - 1:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise
+    raise last_err or RuntimeError("request failed")
+
+
+def fetch_arxiv(window_hours: int, query: str, max_results: int, *, timeout_seconds: float, retries: int) -> list[Paper]:
     # arXiv API: http://export.arxiv.org/api/query
     # We keep it simple + robust: Atom feed parse.
     base = "http://export.arxiv.org/api/query"
@@ -117,8 +166,7 @@ def fetch_arxiv(window_hours: int, query: str, max_results: int = 50) -> list[Pa
         "sortBy": "submittedDate",
         "sortOrder": "descending",
     }
-    r = requests.get(base, params=params, timeout=30)
-    r.raise_for_status()
+    r = _get_with_retry(base, params=params, timeout_seconds=timeout_seconds, retries=retries)
     feed = feedparser.parse(r.text)
     out: list[Paper] = []
     for e in feed.entries:
@@ -154,7 +202,7 @@ def fetch_arxiv(window_hours: int, query: str, max_results: int = 50) -> list[Pa
     return out
 
 
-def fetch_hf_papers(window_hours: int, max_items: int = 50) -> list[Paper]:
+def fetch_hf_papers(window_hours: int, max_items: int, *, timeout_seconds: float, retries: int) -> list[Paper]:
     # Hugging Face Papers RSS can require auth in some environments.
     # The /api/papers/search endpoint can be picky about params (we observed 400 for date-only).
     # Use the public web page and extract __NEXT_DATA__ JSON (no auth required):
@@ -167,8 +215,7 @@ def fetch_hf_papers(window_hours: int, max_items: int = 50) -> list[Paper]:
     seen_ids: set[str] = set()
     for d in sorted(days, reverse=True):
         url = "https://huggingface.co/papers"
-        r = requests.get(url, params={"date": d.isoformat()}, timeout=30)
-        r.raise_for_status()
+        r = _get_with_retry(url, params={"date": d.isoformat()}, timeout_seconds=timeout_seconds, retries=retries)
         html = r.text
         m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html, re.S)
         if not m:
@@ -232,14 +279,18 @@ def fetch_hf_papers(window_hours: int, max_items: int = 50) -> list[Paper]:
     return out
 
 
-def render_digest_md(papers: list[Paper], window_hours: int) -> str:
+def render_digest_md(papers: list[ScoredPaper], window_hours: int, profile: str) -> str:
     ts = _utc_now().strftime("%Y-%m-%d")
-    lines = [f"## 文献雷达日报（UTC {ts}，近 {window_hours}h）", ""]
+    prof = profile.replace("_", " ")
+    lines = [f"## 文献雷达日报（UTC {ts}，近 {window_hours}h，profile: {prof}）", ""]
     for p in papers:
         src = "arXiv" if p.source == "arxiv" else "HF Papers"
         lines.append(f"### {p.title}")
         lines.append(f"- 来源：{src}")
         lines.append(f"- 链接：{p.url}")
+        lines.append(f"- 相关度：{p.score:.1f}")
+        if p.matched_terms:
+            lines.append(f"- 命中：{', '.join(p.matched_terms[:16])}{'…' if len(p.matched_terms) > 16 else ''}")
         if p.published_at:
             lines.append(f"- 发布时间：{p.published_at}")
         if p.authors:
@@ -258,32 +309,45 @@ def render_digest_md(papers: list[Paper], window_hours: int) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="lit-radar")
-    ap.add_argument("--window-hours", type=int, default=24)
-    ap.add_argument("--sources", type=str, default="arxiv,hf")
+    ap.add_argument("--config", type=str, default="", help="path to JSON config file")
+    ap.add_argument("--window-hours", type=int, default=None)
+    ap.add_argument("--sources", type=str, default=None)
     ap.add_argument(
         "--query",
         type=str,
-        default="cat:cs.RO OR cat:cs.AI OR cat:cs.LG",
+        default=None,
         help="arXiv search_query (e.g. 'cat:cs.RO AND (dexterous OR tactile)')",
     )
-    ap.add_argument("--keywords", type=str, default="", help="comma-separated keywords filter")
-    ap.add_argument("--max-results", type=int, default=50, help="max results per source")
-    ap.add_argument("--out", type=str, default="out")
-    ap.add_argument("--db", type=str, default="")
+    ap.add_argument("--keywords", type=str, default=None, help="comma-separated keywords filter")
+    ap.add_argument("--max-results", type=int, default=None, help="max results per source")
+    ap.add_argument("--profile", type=str, default=None, help="scoring profile: general | dexterous_hand")
+    ap.add_argument("--min-score", type=float, default=None, help="minimum relevance score to keep")
+    ap.add_argument("--include-seen", action="store_true", help="also output papers already in DB (still deduped in DB)")
+    ap.add_argument("--timeout-seconds", dest="timeout_seconds", type=float, default=None, help="HTTP timeout seconds")
+    ap.add_argument("--retries", type=int, default=None, help="HTTP retry attempts")
+    ap.add_argument("--out", type=str, default=None)
+    ap.add_argument("--db", type=str, default=None)
     args = ap.parse_args(argv)
 
+    cfg: dict = load_config(args.config) if args.config else {}
+    settings: Settings = resolve_settings(args, cfg)
+    profiles = merge_profiles(DEFAULT_PROFILES, parse_profiles_from_config(cfg))
+    if settings.profile not in profiles:
+        known = ", ".join(sorted(profiles.keys()))
+        raise SystemExit(f"unknown profile: {settings.profile} (known: {known})")
+    profile_terms = profiles[settings.profile]
+
     sources: list[Source] = []
-    for s in (x.strip() for x in args.sources.split(",") if x.strip()):
+    for s in (x.strip() for x in settings.sources.split(",") if x.strip()):
         if s not in ("arxiv", "hf"):
             raise SystemExit(f"unknown source: {s}")
         sources.append(s)  # type: ignore[arg-type]
     if not sources:
         sources = ["arxiv", "hf"]
 
-    out_dir = args.out
-    _ensure_out_dir(out_dir)
-    db_path = args.db or os.path.join(out_dir, "lit_radar.sqlite3")
-    keywords = _parse_keywords(args.keywords)
+    _ensure_out_dir(settings.out)
+    db_path = (str(settings.db).strip() if settings.db else "") or os.path.join(settings.out, "lit_radar.sqlite3")
+    keywords = _parse_keywords(settings.keywords)
 
     conn = _db_connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -291,32 +355,50 @@ def main(argv: list[str] | None = None) -> int:
 
     fetched: list[Paper] = []
     if "arxiv" in sources:
-        fetched.extend(fetch_arxiv(args.window_hours, args.query, max_results=args.max_results))
+        fetched.extend(
+            fetch_arxiv(
+                settings.window_hours,
+                settings.query,
+                max_results=settings.max_results,
+                timeout_seconds=settings.timeout_seconds,
+                retries=settings.retries,
+            )
+        )
     if "hf" in sources:
-        fetched.extend(fetch_hf_papers(args.window_hours, max_items=args.max_results))
+        fetched.extend(
+            fetch_hf_papers(
+                settings.window_hours,
+                max_items=settings.max_results,
+                timeout_seconds=settings.timeout_seconds,
+                retries=settings.retries,
+            )
+        )
 
     kept: list[Paper] = []
     for p in fetched:
         if not _keyword_match(p.title, p.summary, keywords):
             continue
-        if _db_seen(conn, p):
-            continue
-        _db_insert(conn, p)
-        kept.append(p)
+        seen = _db_seen(conn, p)
+        if not seen:
+            _db_insert(conn, p)
+        if (not seen) or settings.include_seen:
+            kept.append(p)
     conn.commit()
     conn.close()
 
-    kept_sorted = sorted(kept, key=lambda x: (x.published_at or "", x.source), reverse=True)
-    papers_json_path = os.path.join(out_dir, "papers.json")
-    digest_md_path = os.path.join(out_dir, "digest.md")
+    scored = [_to_scored(p, profile_terms) for p in kept]
+    scored = [p for p in scored if p.score >= settings.min_score]
+    kept_sorted = sorted(scored, key=lambda x: (x.score, x.published_at or "", x.source), reverse=True)
+    papers_json_path = os.path.join(settings.out, "papers.json")
+    digest_md_path = os.path.join(settings.out, "digest.md")
     with open(papers_json_path, "w", encoding="utf-8") as f:
         json.dump([asdict(p) for p in kept_sorted], f, ensure_ascii=False, indent=2)
     with open(digest_md_path, "w", encoding="utf-8") as f:
-        f.write(render_digest_md(kept_sorted, args.window_hours))
+        f.write(render_digest_md(kept_sorted, settings.window_hours, settings.profile))
 
     print(f"saved: {papers_json_path}")
     print(f"saved: {digest_md_path}")
-    print(f"new_papers: {len(kept_sorted)}")
+    print(f"papers_out: {len(kept_sorted)}")
     return 0
 
 
