@@ -23,6 +23,7 @@ class Settings:
     out: str = "out"
     db: str = ""
     verbose: bool = False
+    llm_config: str = ""
 
 
 def load_config(path: str) -> dict[str, Any]:
@@ -75,5 +76,6 @@ def resolve_settings(cli: Any, cfg: dict[str, Any]) -> Settings:
         out=str(_coalesce(getattr(cli, "out", None), cfg.get("out"), d.out)),
         db=str(_coalesce(getattr(cli, "db", None), cfg.get("db"), d.db)),
         verbose=bool(_coalesce(getattr(cli, "verbose", None), cfg.get("verbose"), d.verbose)),
+        llm_config=str(_coalesce(getattr(cli, "llm_config", None), cfg.get("llm_config"), d.llm_config)),
     )
 

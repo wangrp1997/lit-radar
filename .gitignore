@@ -13,3 +13,6 @@ venv/
 # Outputs / local data
 out/
 
+# Local secret configs
+configs/*.local.json
+

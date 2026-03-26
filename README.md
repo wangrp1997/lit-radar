@@ -38,11 +38,30 @@ python3 -m lit_radar --config configs/dexterous_hand.json
 - `--db`: SQLite 路径（默认 `out/lit_radar.sqlite3`）
 - `--out`: 输出目录（默认 `out`）
 - `--verbose` / `-v`：打印各过滤阶段数量（便于排查为何 `papers_out` 为 0）；也可在 JSON 里设 `"verbose": true`
+- `--llm-config`: 本地 LLM 配置路径（例如 `configs/llm.local.json`，用于生成中文“系统总结”）
 
 ### 输出
 - `out/papers.json`: 结构化结果
 - `out/digest.md`: 今日摘要（英文字段标签 + 原文摘要）
 - `out/digest.zh.md`: 今日摘要（中文字段标签 + 中文摘要；翻译失败自动回退原文）
+
+### 可选：启用千问系统总结（仅本地）
+
+1) 复制示例配置并填入你本地 key（不要提交）：
+
+```bash
+cp configs/llm.example.json configs/llm.local.json
+```
+
+2) 运行时传入：
+
+```bash
+python3 -m lit_radar --config configs/my_dexhand.json --llm-config configs/llm.local.json
+```
+
+启用后，`out/digest.zh.md` 每篇会多一个“系统总结”小节（问题/方法/结果/相关性）。  
+`configs/*.local.json` 已在 `.gitignore` 忽略，避免误提交。
+若配置里或命令行开启 `verbose`，终端还会打印每次请求与总计的 token 用量。
 
 ### 示例：抓“灵巧手操作”相关论文（更聚焦）
 
