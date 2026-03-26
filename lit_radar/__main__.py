@@ -68,6 +68,14 @@ def _keyword_match(title: str, summary: str | None, keywords: list[str]) -> bool
     return any(k in hay for k in keywords)
 
 
+def _exclude_match(title: str, summary: str | None, exclude: list[str]) -> bool:
+    """True if any exclude phrase appears (case-insensitive)."""
+    if not exclude:
+        return False
+    hay = (title + "\n" + (summary or "")).lower()
+    return any(k in hay for k in exclude)
+
+
 def _to_scored(p: Paper, profile_terms) -> ScoredPaper:
     score, matched_terms = score_text(p.title + "\n" + (p.summary or ""), profile_terms)
     return ScoredPaper(
@@ -82,6 +90,23 @@ def _to_scored(p: Paper, profile_terms) -> ScoredPaper:
         score=score,
         matched_terms=matched_terms,
     )
+
+
+def _translate_to_zh(text: str, cache: dict[str, str]) -> str:
+    raw = _norm_space(text)
+    if not raw:
+        return raw
+    if raw in cache:
+        return cache[raw]
+    try:
+        from deep_translator import GoogleTranslator  # lazy import for optional dependency
+
+        translated = GoogleTranslator(source="auto", target="zh-CN").translate(raw)
+        out = _norm_space(translated or raw)
+    except Exception:
+        out = raw
+    cache[raw] = out
+    return out
 
 
 def _ensure_out_dir(path: str) -> None:
@@ -279,30 +304,50 @@ def fetch_hf_papers(window_hours: int, max_items: int, *, timeout_seconds: float
     return out
 
 
-def render_digest_md(papers: list[ScoredPaper], window_hours: int, profile: str) -> str:
+def render_digest_md(
+    papers: list[ScoredPaper],
+    window_hours: int,
+    profile: str,
+    lang: str = "en",
+    translate_summary_zh: bool = True,
+) -> str:
     ts = _utc_now().strftime("%Y-%m-%d")
     prof = profile.replace("_", " ")
-    lines = [f"## 文献雷达日报（UTC {ts}，近 {window_hours}h，profile: {prof}）", ""]
+    is_zh = lang == "zh"
+    zh_cache: dict[str, str] = {}
+    if is_zh:
+        lines = [f"## 文献雷达日报（UTC {ts}，近 {window_hours}h，profile: {prof}）", ""]
+    else:
+        lines = [f"## Literature Radar Digest (UTC {ts}, last {window_hours}h, profile: {prof})", ""]
     for p in papers:
         src = "arXiv" if p.source == "arxiv" else "HF Papers"
         lines.append(f"### {p.title}")
-        lines.append(f"- 来源：{src}")
-        lines.append(f"- 链接：{p.url}")
-        lines.append(f"- 相关度：{p.score:.1f}")
+        lines.append(f"- {'来源' if is_zh else 'Source'}: {src}")
+        lines.append(f"- {'链接' if is_zh else 'URL'}: {p.url}")
+        lines.append(f"- {'相关度' if is_zh else 'Score'}: {p.score:.1f}")
         if p.matched_terms:
-            lines.append(f"- 命中：{', '.join(p.matched_terms[:16])}{'…' if len(p.matched_terms) > 16 else ''}")
+            lines.append(
+                f"- {'命中' if is_zh else 'Matched terms'}: "
+                f"{', '.join(p.matched_terms[:16])}{'…' if len(p.matched_terms) > 16 else ''}"
+            )
         if p.published_at:
-            lines.append(f"- 发布时间：{p.published_at}")
+            lines.append(f"- {'发布时间' if is_zh else 'Published at'}: {p.published_at}")
         if p.authors:
-            lines.append(f"- 作者：{', '.join(p.authors[:12])}{'…' if len(p.authors) > 12 else ''}")
+            lines.append(f"- {'作者' if is_zh else 'Authors'}: {', '.join(p.authors[:12])}{'…' if len(p.authors) > 12 else ''}")
         if p.tags:
-            lines.append(f"- 标签：{', '.join(p.tags[:12])}{'…' if len(p.tags) > 12 else ''}")
+            lines.append(f"- {'标签' if is_zh else 'Tags'}: {', '.join(p.tags[:12])}{'…' if len(p.tags) > 12 else ''}")
         if p.summary:
             lines.append("")
-            lines.append(_norm_space(p.summary))
+            summary = _norm_space(p.summary)
+            if is_zh and translate_summary_zh:
+                summary = _translate_to_zh(summary, zh_cache)
+            lines.append(summary)
         lines.append("")
     if len(papers) == 0:
-        lines.append("（本时间窗内未抓到匹配结果。可以尝试扩大 `--window-hours` 或放宽 `--query/--keywords`。）")
+        if is_zh:
+            lines.append("（本时间窗内未抓到匹配结果。可以尝试扩大 `--window-hours` 或放宽 `--query/--keywords`。）")
+        else:
+            lines.append("(No matching papers found in this time window. Try increasing --window-hours or relaxing --query/--keywords.)")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -319,14 +364,37 @@ def main(argv: list[str] | None = None) -> int:
         help="arXiv search_query (e.g. 'cat:cs.RO AND (dexterous OR tactile)')",
     )
     ap.add_argument("--keywords", type=str, default=None, help="comma-separated keywords filter")
+    ap.add_argument(
+        "--require-any-keywords",
+        dest="require_any_keywords",
+        type=str,
+        default=None,
+        help="comma-separated: title/abstract must contain at least one (hand-focus gate)",
+    )
+    ap.add_argument(
+        "--exclude-keywords",
+        dest="exclude_keywords",
+        type=str,
+        default=None,
+        help="comma-separated: drop if title/abstract contains any",
+    )
     ap.add_argument("--max-results", type=int, default=None, help="max results per source")
     ap.add_argument("--profile", type=str, default=None, help="scoring profile: general | dexterous_hand")
     ap.add_argument("--min-score", type=float, default=None, help="minimum relevance score to keep")
-    ap.add_argument("--include-seen", action="store_true", help="also output papers already in DB (still deduped in DB)")
+    ap.add_argument(
+        "--include-seen",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="also output papers already in DB (omit flag to use config default; --no-include-seen to force off)",
+    )
+    grp = ap.add_mutually_exclusive_group()
+    grp.add_argument("--translate-summary-zh", dest="translate_summary_zh", action="store_true", default=None)
+    grp.add_argument("--no-translate-summary-zh", dest="translate_summary_zh", action="store_false", default=None)
     ap.add_argument("--timeout-seconds", dest="timeout_seconds", type=float, default=None, help="HTTP timeout seconds")
     ap.add_argument("--retries", type=int, default=None, help="HTTP retry attempts")
     ap.add_argument("--out", type=str, default=None)
     ap.add_argument("--db", type=str, default=None)
+    ap.add_argument("--verbose", "-v", action="store_true", default=None, help="print filter stage counts")
     args = ap.parse_args(argv)
 
     cfg: dict = load_config(args.config) if args.config else {}
@@ -348,6 +416,8 @@ def main(argv: list[str] | None = None) -> int:
     _ensure_out_dir(settings.out)
     db_path = (str(settings.db).strip() if settings.db else "") or os.path.join(settings.out, "lit_radar.sqlite3")
     keywords = _parse_keywords(settings.keywords)
+    require_any = _parse_keywords(settings.require_any_keywords)
+    exclude = _parse_keywords(settings.exclude_keywords)
 
     conn = _db_connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -375,8 +445,16 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     kept: list[Paper] = []
+    drop_req = drop_excl = drop_kw = 0
     for p in fetched:
+        if require_any and not _keyword_match(p.title, p.summary, require_any):
+            drop_req += 1
+            continue
+        if _exclude_match(p.title, p.summary, exclude):
+            drop_excl += 1
+            continue
         if not _keyword_match(p.title, p.summary, keywords):
+            drop_kw += 1
             continue
         seen = _db_seen(conn, p)
         if not seen:
@@ -387,18 +465,45 @@ def main(argv: list[str] | None = None) -> int:
     conn.close()
 
     scored = [_to_scored(p, profile_terms) for p in kept]
+    below_min = sum(1 for p in scored if p.score < settings.min_score)
     scored = [p for p in scored if p.score >= settings.min_score]
     kept_sorted = sorted(scored, key=lambda x: (x.score, x.published_at or "", x.source), reverse=True)
     papers_json_path = os.path.join(settings.out, "papers.json")
     digest_md_path = os.path.join(settings.out, "digest.md")
+    digest_zh_md_path = os.path.join(settings.out, "digest.zh.md")
     with open(papers_json_path, "w", encoding="utf-8") as f:
         json.dump([asdict(p) for p in kept_sorted], f, ensure_ascii=False, indent=2)
     with open(digest_md_path, "w", encoding="utf-8") as f:
-        f.write(render_digest_md(kept_sorted, settings.window_hours, settings.profile))
+        f.write(render_digest_md(kept_sorted, settings.window_hours, settings.profile, lang="en"))
+    with open(digest_zh_md_path, "w", encoding="utf-8") as f:
+        f.write(
+            render_digest_md(
+                kept_sorted,
+                settings.window_hours,
+                settings.profile,
+                lang="zh",
+                translate_summary_zh=settings.translate_summary_zh,
+            )
+        )
 
     print(f"saved: {papers_json_path}")
     print(f"saved: {digest_md_path}")
+    print(f"saved: {digest_zh_md_path}")
     print(f"papers_out: {len(kept_sorted)}")
+    if settings.verbose:
+        pass_req = len(fetched) - drop_req
+        print(
+            "stats: "
+            f"fetched={len(fetched)} "
+            f"pass_require_any={pass_req} "
+            f"drop_require_any={drop_req} "
+            f"drop_exclude={drop_excl} "
+            f"drop_keywords={drop_kw} "
+            f"kept_after_filters={len(kept)} "
+            f"drop_below_min_score={below_min} "
+            f"min_score={settings.min_score} "
+            f"include_seen={settings.include_seen}"
+        )
     return 0
 
 

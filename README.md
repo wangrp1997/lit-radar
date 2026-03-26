@@ -25,19 +25,24 @@ python3 -m lit_radar --config configs/dexterous_hand.json
 ### 常用参数
 - `--config`: JSON 配置文件路径（配置文件会提供默认值；命令行同名参数会覆盖配置）
 - `--query`: arXiv 搜索查询（例如 `cat:cs.RO AND (dexterous OR tactile)`）
-- `--keywords`: 逗号分隔关键词（对 title/abstract 做包含过滤）
+- `--keywords`: 逗号分隔关键词（对 title/abstract 做包含过滤；至少命中其一）
+- `--require-any-keywords`: 逗号分隔「硬门槛」：标题/摘要里**至少命中其一**才保留（适合只要五指灵巧手/人手等，过滤泛泛 manipulation）
+- `--exclude-keywords`: 逗号分隔：标题/摘要里出现**任一**则丢弃
 - `--sources`: `arxiv`、`hf` 或 `arxiv,hf`
 - `--profile`: 相关性打分配置（`general` 或 `dexterous_hand`）
 - `--min-score`: 最低相关性阈值（搭配 `--profile` 使用）
-- `--include-seen`: 也输出数据库里已存在的论文（适合做日报/周报复跑）
+- `--include-seen` / `--no-include-seen`: 是否也输出库里已有的论文；**不传时以配置文件为准**（避免命令行默认 false 覆盖配置里的 `true`）
+- `--translate-summary-zh` / `--no-translate-summary-zh`: 是否将 `digest.zh.md` 里的摘要翻译成中文（默认开启）
 - `--timeout-seconds`: HTTP 超时秒数（网络慢/偶发超时可调大）
 - `--retries`: HTTP 重试次数（网络抖动可调大）
 - `--db`: SQLite 路径（默认 `out/lit_radar.sqlite3`）
 - `--out`: 输出目录（默认 `out`）
+- `--verbose` / `-v`：打印各过滤阶段数量（便于排查为何 `papers_out` 为 0）；也可在 JSON 里设 `"verbose": true`
 
 ### 输出
 - `out/papers.json`: 结构化结果
-- `out/digest.md`: 今日摘要（可用于后续推送）
+- `out/digest.md`: 今日摘要（英文字段标签 + 原文摘要）
+- `out/digest.zh.md`: 今日摘要（中文字段标签 + 中文摘要；翻译失败自动回退原文）
 
 ### 示例：抓“灵巧手操作”相关论文（更聚焦）
 

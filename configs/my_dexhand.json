@@ -1,35 +1,46 @@
 {
-  "window_hours": 680,
+  "window_hours": 168,
   "sources": "arxiv,hf",
   "max_results": 120,
   "out": "out",
   "db": "",
 
-  "query": "cat:cs.RO AND (dexterous OR \"in-hand\" OR \"robotic hand\" OR multifinger OR tactile OR grasp OR manipulation)",
-  "keywords": "in-hand, dexterous, robotic hand, multifinger, tactile, fingertip, regrasp, retargeting, teleoperation",
+  "query": "cat:cs.RO AND (dexterous OR tactile OR \"robotic hand\" OR \"dexterous hand\" OR multifinger OR \"multi-finger\" OR anthropomorphic OR \"five finger\" OR \"five-finger\" OR \"in-hand\" OR \"in hand\" OR \"humanoid hand\" OR \"hand manipulation\" OR \"dexterous manipulation\")",
+  "keywords": "",
+
+  "require_any_keywords": "robotic hand, dexterous hand, multifinger, multi-finger, anthropomorphic, five finger, five-finger, in-hand, in hand, humanoid hand, shadow hand, allegro hand, fingertip, finger, hand-object, hand object, tendon-driven, underactuated hand, musculoskeletal hand",
+  "exclude_keywords": "",
 
   "profile": "dexterous_hand",
-  "min_score": 6,
+  "min_score": 3,
   "include_seen": true,
+  "verbose": true,
   "timeout_seconds": 90,
   "retries": 4,
 
   "profiles": {
     "dexterous_hand": [
-      { "term": "dexterous hand", "weight": 7.0 },
-      { "term": "in-hand", "weight": 2.0 },
-      { "term": "in hand", "weight": 2.0 },
-      { "term": "multifinger", "weight": 5.0 },
-      { "term": "multi-finger", "weight": 5.0 },
+      { "term": "dexterous hand", "weight": 8.0 },
+      { "term": "robotic hand", "weight": 7.0 },
+      { "term": "anthropomorphic hand", "weight": 8.0 },
+      { "term": "humanoid hand", "weight": 7.0 },
+      { "term": "five finger", "weight": 7.0 },
+      { "term": "five-finger", "weight": 7.0 },
+      { "term": "multifinger", "weight": 6.0 },
+      { "term": "multi-finger", "weight": 6.0 },
+      { "term": "in-hand", "weight": 6.0 },
+      { "term": "in hand", "weight": 5.0 },
+      { "term": "shadow hand", "weight": 6.0 },
+      { "term": "allegro hand", "weight": 6.0 },
       { "term": "tactile", "weight": 4.0 },
-      { "term": "retargeting", "weight": 4.0 },
+      { "term": "fingertip", "weight": 4.0 },
+      { "term": "finger", "weight": 2.0 },
+      { "term": "regrasp", "weight": 5.0 },
+      { "term": "retargeting", "weight": 3.0 },
       { "term": "teleoperation", "weight": 3.0 },
-      { "term": "regrasp", "weight": 4.0 },
-      { "term": "fingertip", "weight": 3.0 },
-      { "term": "hand-object", "weight": 3.0 },
-      { "term": "grasping", "weight": 2.0 },
-      { "term": "manipulation", "weight": 2.0 }
+      { "term": "hand-object", "weight": 4.0 },
+      { "term": "grasping", "weight": 0.5 },
+      { "term": "manipulation", "weight": 0.5 }
     ]
   }
 }
-

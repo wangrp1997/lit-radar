@@ -11,14 +11,18 @@ class Settings:
     sources: str = "arxiv,hf"
     query: str = "cat:cs.RO OR cat:cs.AI OR cat:cs.LG"
     keywords: str = ""
+    require_any_keywords: str = ""
+    exclude_keywords: str = ""
     max_results: int = 50
     profile: str = "general"
     min_score: float = 0.0
     include_seen: bool = False
+    translate_summary_zh: bool = True
     timeout_seconds: float = 60.0
     retries: int = 3
     out: str = "out"
     db: str = ""
+    verbose: bool = False
 
 
 def load_config(path: str) -> dict[str, Any]:
@@ -49,13 +53,27 @@ def resolve_settings(cli: Any, cfg: dict[str, Any]) -> Settings:
         sources=str(_coalesce(getattr(cli, "sources", None), cfg.get("sources"), d.sources)),
         query=str(_coalesce(getattr(cli, "query", None), cfg.get("query"), d.query)),
         keywords=str(_coalesce(getattr(cli, "keywords", None), cfg.get("keywords"), d.keywords)),
+        require_any_keywords=str(
+            _coalesce(getattr(cli, "require_any_keywords", None), cfg.get("require_any_keywords"), d.require_any_keywords)
+        ),
+        exclude_keywords=str(
+            _coalesce(getattr(cli, "exclude_keywords", None), cfg.get("exclude_keywords"), d.exclude_keywords)
+        ),
         max_results=int(_coalesce(getattr(cli, "max_results", None), cfg.get("max_results"), d.max_results)),
         profile=str(_coalesce(getattr(cli, "profile", None), cfg.get("profile"), d.profile)).strip(),
         min_score=float(_coalesce(getattr(cli, "min_score", None), cfg.get("min_score"), d.min_score)),
         include_seen=bool(_coalesce(getattr(cli, "include_seen", None), cfg.get("include_seen"), d.include_seen)),
+        translate_summary_zh=bool(
+            _coalesce(
+                getattr(cli, "translate_summary_zh", None),
+                cfg.get("translate_summary_zh"),
+                d.translate_summary_zh,
+            )
+        ),
         timeout_seconds=float(_coalesce(getattr(cli, "timeout_seconds", None), cfg.get("timeout_seconds"), d.timeout_seconds)),
         retries=int(_coalesce(getattr(cli, "retries", None), cfg.get("retries"), d.retries)),
         out=str(_coalesce(getattr(cli, "out", None), cfg.get("out"), d.out)),
         db=str(_coalesce(getattr(cli, "db", None), cfg.get("db"), d.db)),
+        verbose=bool(_coalesce(getattr(cli, "verbose", None), cfg.get("verbose"), d.verbose)),
     )
 
